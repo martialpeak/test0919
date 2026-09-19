@@ -1,0 +1,368 @@
+import React from 'react';
+import { Movie, ViewMode, SortType } from '../types';
+import { FeaturedBanner } from '../components/FeaturedBanner';
+import { CategoryFilter } from '../components/CategoryFilter';
+import { matchesCategory } from '../data/categories';
+import { MovieGridCard } from '../components/MovieGridCard';
+import { MovieListCard } from '../components/MovieListCard';
+import { ExportHtmlModal } from '../components/ExportHtmlModal';
+import { useProgressiveList } from '../utils/useProgressiveList';
+import { 
+  LayoutGrid, 
+  List, 
+  ArrowUpDown, 
+  SearchX, 
+  HeartCrack,
+  Film,
+  PlusCircle,
+  FileCode,
+  Download,
+  Loader2
+} from 'lucide-react';
+
+interface HomeScreenProps {
+  movies: Movie[];
+  onMovieClick: (movie: Movie) => void;
+  onToggleFavorite: (messageId: number) => void;
+  onTrailerClick: (movie: Movie) => void;
+  onAddMovie: () => void;
+  onUploadHtml?: () => void;
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
+  showFavoritesOnly: boolean;
+  setShowFavoritesOnly: (show: boolean) => void;
+  isAdmin?: boolean;
+}
+
+export const HomeScreen: React.FC<HomeScreenProps> = ({
+  movies,
+  onMovieClick,
+  onToggleFavorite,
+  onTrailerClick,
+  onAddMovie,
+  onUploadHtml,
+  searchQuery,
+  setSearchQuery,
+  showFavoritesOnly,
+  setShowFavoritesOnly,
+  isAdmin = false,
+}) => {
+  const [selectedCategory, setSelectedCategory] = React.useState<string>(() => {
+    try { return sessionStorage.getItem('mb_home_category') || 'ALL'; } catch { return 'ALL'; }
+  });
+  const [viewMode, setViewMode] = React.useState<ViewMode>(() => {
+    try { return (sessionStorage.getItem('mb_home_viewmode') as ViewMode) || 'GRID'; } catch { return 'GRID'; }
+  });
+  const [sortType, setSortType] = React.useState<SortType>(() => {
+    try { return (sessionStorage.getItem('mb_home_sort') as SortType) || 'NEWEST'; } catch { return 'NEWEST'; }
+  });
+  const [showExportModal, setShowExportModal] = React.useState<boolean>(false);
+
+  // ---- Scroll restoration: remember position when leaving (opening a movie / tab switch),
+  // ---- restore it after the progressive list has re-grown (on remount).
+  const savedScrollY = React.useRef<number>(0);
+  React.useEffect(() => {
+    try { savedScrollY.current = parseInt(sessionStorage.getItem('mb_home_scroll') || '0', 10) || 0; } catch {}
+    return () => {
+      // unmount = leaving home; persist filter state
+      try {
+        sessionStorage.setItem('mb_home_category', selectedCategory);
+        sessionStorage.setItem('mb_home_viewmode', viewMode);
+        sessionStorage.setItem('mb_home_sort', sortType);
+      } catch {}
+    };
+  }, [selectedCategory, viewMode, sortType]);
+
+  React.useEffect(() => {
+    const y = savedScrollY.current;
+    if (!y) return;
+    // Wait until the list has rendered enough rows, then jump back (instant, no animation).
+    const t = setTimeout(() => { window.scrollTo({ top: y, behavior: 'instant' as ScrollBehavior }); }, 60);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Featured Movie (first prominent movie or top rated)
+  const featuredMovie = React.useMemo(() => {
+    return movies.find(m => m.rating && parseFloat(m.rating) >= 8.5) || movies[0];
+  }, [movies]);
+
+  // Filter & Sort Logic
+  const filteredMovies = React.useMemo(() => {
+    return movies
+      .filter((movie) => {
+        // Category Filter with robust multi-condition matching
+        if (selectedCategory !== 'ALL' && !matchesCategory(movie, selectedCategory)) {
+          return false;
+        }
+
+        // Favorites Filter
+        if (showFavoritesOnly && !movie.is_favorite) {
+          return false;
+        }
+
+        // Search Query (Search title, english title, actors, genre, country)
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase().trim();
+          const matchesTitle = movie.title?.toLowerCase().includes(q);
+          const matchesEnTitle = movie.english_title?.toLowerCase().includes(q);
+          const matchesActors = movie.actors?.toLowerCase().includes(q);
+          const matchesGenre = movie.genre?.toLowerCase().includes(q);
+          const matchesCountry = movie.country?.toLowerCase().includes(q);
+          const matchesDescription = movie.description?.toLowerCase().includes(q);
+
+          if (!matchesTitle && !matchesEnTitle && !matchesActors && !matchesGenre && !matchesCountry && !matchesDescription) {
+            return false;
+          }
+        }
+
+        return true;
+      })
+      .sort((a, b) => {
+        switch (sortType) {
+          case 'NEWEST':
+            return (b.timestamp || 0) - (a.timestamp || 0) || b.message_id - a.message_id;
+          case 'OLDEST':
+            return (a.timestamp || 0) - (b.timestamp || 0) || a.message_id - b.message_id;
+          case 'YEAR_NEW':
+            return (parseInt(b.year || '0') || 0) - (parseInt(a.year || '0') || 0);
+          case 'YEAR_OLD':
+            return (parseInt(a.year || '0') || 0) - (parseInt(b.year || '0') || 0);
+          case 'RATING_HIGH':
+            return (parseFloat(b.rating || '0') || 0) - (parseFloat(a.rating || '0') || 0);
+          case 'RATING_LOW':
+            return (parseFloat(a.rating || '0') || 0) - (parseFloat(b.rating || '0') || 0);
+          case 'NAME':
+            return a.title.localeCompare(b.title, 'fa');
+          default:
+            return 0;
+        }
+      });
+  }, [movies, selectedCategory, showFavoritesOnly, searchQuery, sortType]);
+
+  // Track scroll position continuously while home is mounted (lightweight, passive).
+  React.useEffect(() => {
+    const onScroll = () => {
+      try { sessionStorage.setItem('mb_home_scroll', String(window.scrollY)); } catch {}
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // Render the list progressively. The user sees an endless list (no page numbers); the DOM only
+  // ever holds a bounded slice, which is what keeps thousands of movies usable.
+  const {
+    visible: visibleMovies,
+    sentinelRef,
+    hasMore,
+    shownCount,
+  } = useProgressiveList(filteredMovies, 60, 60);
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24 md:pb-12">
+      
+      {/* Featured Banner (only show if no search/favorites filter active) */}
+      {!searchQuery && !showFavoritesOnly && selectedCategory === 'ALL' && featuredMovie && (
+        <FeaturedBanner
+          movie={featuredMovie}
+          onMovieClick={onMovieClick}
+          onTrailerClick={onTrailerClick}
+          onToggleFavorite={onToggleFavorite}
+        />
+      )}
+
+      {/* Category Pills Bar */}
+      <div className="mb-6">
+        <CategoryFilter
+          selectedCategory={selectedCategory}
+          onSelectCategory={setSelectedCategory}
+          movies={movies}
+        />
+      </div>
+
+      {/* Control Bar: Results count, Sort & View Mode */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 pb-4 border-b border-[#2A2A40]">
+        
+        {/* Results Info */}
+        <div className="flex items-center gap-2">
+          <Film className="w-5 h-5 text-[#E50914]" />
+          <span className="font-bold text-white text-base">
+            {showFavoritesOnly ? 'علاقه‌مندی‌های شما' : 'آرشیو فیلم‌ها و سریال‌ها'}
+          </span>
+          <span className="px-2.5 py-0.5 rounded-full bg-[#1C1C2E] border border-[#2A2A40] text-xs text-[#A0A0B5] font-semibold">
+            {filteredMovies.length} مورد
+          </span>
+        </div>
+
+        {/* Sort, View Mode & Add Movie Controls */}
+        <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end flex-wrap">
+          {/* Admin-only controls */}
+          {isAdmin && (
+            <>
+              {/* Add Movie Action */}
+              <button
+                id="home-add-movie-button"
+                onClick={onAddMovie}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-xs font-bold transition-all hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <PlusCircle className="w-3.5 h-3.5" />
+                <span>افزودن فیلم</span>
+              </button>
+
+              {/* Upload HTML Action */}
+              {onUploadHtml && (
+                <button
+                  id="home-upload-html-button"
+                  onClick={onUploadHtml}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 text-xs font-bold transition-all hover:scale-[1.02] active:scale-[0.98]"
+                  title="آپلود فایل HTML فیلم برای تکمیل خودکار"
+                >
+                  <FileCode className="w-3.5 h-3.5" />
+                  <span>آپلود HTML</span>
+                </button>
+              )}
+
+              {/* Export HTML Action (Admin only) */}
+              <button
+                id="home-export-html-button"
+                onClick={() => setShowExportModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600/25 to-pink-600/25 hover:from-purple-600/35 hover:to-pink-600/35 text-purple-300 border border-purple-500/35 text-xs font-bold transition-all hover:scale-[1.02] active:scale-[0.98]"
+                title="خروجی و دانلود فایل HTML بر اساس قالب اختصاصی (دسترسی مدیریت)"
+              >
+                <Download className="w-3.5 h-3.5 text-pink-300" />
+                <span>خروجی HTML</span>
+              </button>
+            </>
+          )}
+
+          {/* Sort Dropdown */}
+          <div className="relative flex items-center bg-[#1C1C2E] border border-[#2A2A40] rounded-xl px-3 py-1.5 text-xs text-[#A0A0B5]">
+            <ArrowUpDown className="w-3.5 h-3.5 ml-2 text-[#5A5A72]" />
+            <select
+              id="sort-select"
+              value={sortType}
+              onChange={(e) => setSortType(e.target.value as SortType)}
+              className="bg-transparent text-white text-xs focus:outline-none cursor-pointer pr-1"
+            >
+              <option value="NEWEST" className="bg-[#1C1C2E] text-white">جدیدترین</option>
+              <option value="OLDEST" className="bg-[#1C1C2E] text-white">قدیمی‌ترین</option>
+              <option value="YEAR_NEW" className="bg-[#1C1C2E] text-white">سال تولید (جدید)</option>
+              <option value="YEAR_OLD" className="bg-[#1C1C2E] text-white">سال تولید (قدیم)</option>
+              <option value="RATING_HIGH" className="bg-[#1C1C2E] text-white">بالاترین امتیاز</option>
+              <option value="RATING_LOW" className="bg-[#1C1C2E] text-white">پایین‌ترین امتیاز</option>
+              <option value="NAME" className="bg-[#1C1C2E] text-white">نام اثر</option>
+            </select>
+          </div>
+
+          {/* View Mode Toggle (Grid vs List) */}
+          <div className="flex items-center bg-[#1C1C2E] border border-[#2A2A40] p-1 rounded-xl">
+            <button
+              id="view-mode-grid"
+              onClick={() => setViewMode('GRID')}
+              className={`p-1.5 rounded-lg transition-colors ${
+                viewMode === 'GRID' ? 'bg-[#E50914] text-white' : 'text-[#5A5A72] hover:text-white'
+              }`}
+              title="نمایش شبکه‌ای"
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            <button
+              id="view-mode-list"
+              onClick={() => setViewMode('LIST')}
+              className={`p-1.5 rounded-lg transition-colors ${
+                viewMode === 'LIST' ? 'bg-[#E50914] text-white' : 'text-[#5A5A72] hover:text-white'
+              }`}
+              title="نمایش سطری"
+            >
+              <List className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      {/* Movies Content / Empty State */}
+      {filteredMovies.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 px-4 text-center bg-[#141420] rounded-3xl border border-[#2A2A40] my-6">
+          {showFavoritesOnly ? (
+            <>
+              <HeartCrack className="w-16 h-16 text-rose-500/60 mb-4 stroke-1" />
+              <h3 className="text-xl font-bold text-white mb-2">هنوز هیچ فیلمی به علاقه‌مندی‌ها اضافه نشده است</h3>
+              <p className="text-sm text-[#A0A0B5] max-w-md mb-6">
+                با زدن روی آیکون قلب در کنار هر فیلم یا سریال، آن را در این بخش نگه دارید.
+              </p>
+              <button
+                id="reset-favorites-filter-btn"
+                onClick={() => setShowFavoritesOnly(false)}
+                className="px-5 py-2.5 rounded-xl bg-[#E50914] text-white text-sm font-bold shadow-lg shadow-red-600/30 hover:bg-red-600 transition-colors"
+              >
+                مشاهده تمام فیلم‌ها
+              </button>
+            </>
+          ) : (
+            <>
+              <SearchX className="w-16 h-16 text-[#5A5A72] mb-4 stroke-1" />
+              <h3 className="text-xl font-bold text-white mb-2">موردی یافت نشد</h3>
+              <p className="text-sm text-[#A0A0B5] max-w-md mb-6">
+                هیچ فیلم یا سریالی با عبارت «{searchQuery}» یا دسته‌بندی انتخاب شده پیدا نشد.
+              </p>
+              <button
+                id="reset-all-filters-btn"
+                onClick={() => {
+                  setSearchQuery('');
+                  setSelectedCategory('ALL');
+                }}
+                className="px-5 py-2.5 rounded-xl bg-[#242438] text-white text-sm font-bold border border-[#3A3A55] hover:bg-[#2C2C45] transition-colors"
+              >
+                پاک کردن فیلترها
+              </button>
+            </>
+          )}
+        </div>
+      ) : viewMode === 'GRID' ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-5">
+          {visibleMovies.map((movie) => (
+            <MovieGridCard
+              key={movie.message_id}
+              movie={movie}
+              onMovieClick={onMovieClick}
+              onToggleFavorite={onToggleFavorite}
+              onTrailerClick={onTrailerClick}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {visibleMovies.map((movie) => (
+            <MovieListCard
+              key={movie.message_id}
+              movie={movie}
+              onMovieClick={onMovieClick}
+              onToggleFavorite={onToggleFavorite}
+              onTrailerClick={onTrailerClick}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Infinite scroll sentinel — grows the rendered slice as the user reaches the bottom.
+          Deliberately NOT pagination: no page numbers, the list just keeps going. */}
+      {hasMore && (
+        <div ref={sentinelRef} className="flex flex-col items-center justify-center gap-2 py-10">
+          <Loader2 className="w-6 h-6 animate-spin text-[#E50914]" />
+          <span className="text-xs text-[#A0A0B5]">
+            {shownCount} از {filteredMovies.length} مورد نمایش داده شد
+          </span>
+        </div>
+      )}
+
+      {/* HTML Export Modal */}
+      {showExportModal && (
+        <ExportHtmlModal
+          allMovies={filteredMovies.length > 0 ? filteredMovies : movies}
+          onClose={() => setShowExportModal(false)}
+        />
+      )}
+
+    </div>
+  );
+};

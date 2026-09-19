@@ -1,0 +1,61 @@
+import React from 'react';
+
+/**
+ * Progressive rendering for long lists — infinite scroll with NO page numbers.
+ *
+ * Rendering thousands of movie cards at once freezes the browser (5000 cards means 5000
+ * <img> elements). This hook keeps the rendered slice bounded and grows it as the user
+ * reaches the bottom, so the list still *feels* endless.
+ *
+ * Usage:
+ *   const { visible, sentinelRef, hasMore } = useProgressiveList(filteredMovies);
+ *   {visible.map(...)}
+ *   {hasMore && <div ref={sentinelRef} />}
+ *
+ * The count resets whenever the input array identity changes (a new filter/search/sort),
+ * so switching categories always starts from the top of the new result set.
+ */
+export function useProgressiveList<T>(
+  items: T[],
+  initialCount = 60,
+  step = 60
+): { visible: T[]; sentinelRef: React.RefObject<HTMLDivElement>; hasMore: boolean; shownCount: number } {
+  const [count, setCount] = React.useState(initialCount);
+  const sentinelRef = React.useRef<HTMLDivElement>(null);
+
+  // A new filtered set means a new list — start over from the top.
+  React.useEffect(() => {
+    setCount(initialCount);
+  }, [items, initialCount]);
+
+  const hasMore = count < items.length;
+
+  React.useEffect(() => {
+    if (!hasMore) return;
+    const node = sentinelRef.current;
+    if (!node) return;
+
+    // IntersectionObserver is supported everywhere we target; if it is missing, fall back to
+    // rendering everything rather than trapping the user with an un-growable list.
+    if (typeof IntersectionObserver === 'undefined') {
+      setCount(items.length);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setCount((c) => Math.min(c + step, items.length));
+        }
+      },
+      // Start loading before the sentinel is actually on screen so scrolling stays smooth
+      { rootMargin: '600px 0px' }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, items.length, step]);
+
+  const visible = React.useMemo(() => items.slice(0, count), [items, count]);
+
+  return { visible, sentinelRef, hasMore, shownCount: Math.min(count, items.length) };
+}

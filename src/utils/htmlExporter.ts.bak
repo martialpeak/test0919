@@ -1,0 +1,336 @@
+import { Movie } from '../types';
+import { formatMovieYear, isIranianMovie } from './dateHelper';
+
+/**
+ * Escapes HTML characters to prevent XSS / broken markup in the generated HTML.
+ */
+function escapeHtml(text: string | null | undefined): string {
+  if (!text) return '';
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/**
+ * Map country names to flag emojis or data indicators
+ */
+export function getCountryFlagEmoji(country: string = ''): string {
+  const c = country.trim();
+  if (c.includes('ایران') || c.toLowerCase() === 'iran') return '🇮🇷';
+  if (c.includes('آمریکا') || c.includes('امریکا') || c.toLowerCase().includes('usa') || c.toLowerCase().includes('united states')) return '🇺🇸';
+  if (c.includes('ترکیه') || c.toLowerCase().includes('turkey')) return '🇹🇷';
+  if (c.includes('هند') || c.toLowerCase().includes('india')) return '🇮🇳';
+  if (c.includes('انگلستان') || c.includes('بریتانیا') || c.toLowerCase().includes('uk') || c.toLowerCase().includes('britain')) return '🇬🇧';
+  if (c.includes('کره') || c.toLowerCase().includes('korea')) return '🇰🇷';
+  if (c.includes('ژاپن') || c.toLowerCase().includes('japan')) return '🇯🇵';
+  if (c.includes('فرانسه') || c.toLowerCase().includes('france')) return '🇫🇷';
+  if (c.includes('آلمان') || c.toLowerCase().includes('germany')) return '🇩🇪';
+  if (c.includes('ایتالیا') || c.toLowerCase().includes('italy')) return '🇮🇹';
+  if (c.includes('اسپانیا') || c.toLowerCase().includes('spain')) return '🇪🇸';
+  if (c.includes('کانادا') || c.toLowerCase().includes('canada')) return '🇨🇦';
+  return '🌍';
+}
+
+/**
+ * Generates standalone, pixel-perfect HTML code for a single movie based on the user's template.
+ */
+export function generateMovieHtml(movie: Movie): string {
+  // Format year: Solar Hijri for Iranian films/series, Gregorian for foreign
+  const year = formatMovieYear(movie) || movie.year || '';
+  const title = movie.title || 'بدون عنوان';
+  const englishTitle = movie.english_title || '';
+  const subtitle = englishTitle ? `${englishTitle} — ${year}` : (year ? `محصول سال ${year}` : '');
+  
+  // Format genres into <span class="tag">ژانر</span>
+  const rawGenre = movie.genre || 'سینمایی';
+  const genreTokens = rawGenre
+    .split(/[|،,•]+/)
+    .map(g => g.trim())
+    .filter(Boolean);
+
+  const genresTags = genreTokens.length > 0
+    ? genreTokens.map(g => `<span class="tag">${escapeHtml(g)}</span>`).join('')
+    : `<span class="tag">سینمایی</span>`;
+
+  const actors = movie.actors || '—';
+  const rating = movie.rating || '7.5';
+  const source = movie.channel || 'uptvs.com';
+  const quality = movie.quality || '1080p Full HD';
+  const countryName = movie.country || (isIranianMovie(movie) ? 'ایران' : 'بین‌المللی');
+  const flagEmoji = getCountryFlagEmoji(countryName);
+  const countryHtml = `${flagEmoji} ${escapeHtml(countryName)}`;
+
+  const posterUrl = movie.poster_url || 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=780&auto=format&fit=crop&q=80';
+  const plot = movie.description || `خلاصه داستان اثر «${title}» به زودی قرار خواهد گرفت.`;
+
+  return `<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtml(title)}${year ? ` (${escapeHtml(year)})` : ''}</title>
+<style>
+/* Vazirmatn font - installed system-wide */
+body { font-family: 'Vazirmatn', 'Tahoma', 'Arial', sans-serif; }
+</style>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Vazirmatn',sans-serif;background:#0a0a14;color:#f0f0f5;min-height:100vh;
+  background-image:radial-gradient(ellipse at 20% 50%,rgba(124,58,237,0.08) 0%,transparent 50%),
+  radial-gradient(ellipse at 80% 20%,rgba(225,29,72,0.06) 0%,transparent 50%)}
+.page{max-width:800px;margin:0 auto;padding:30px 20px}
+.hero{display:flex;gap:24px;align-items:start;margin-bottom:28px;
+  background:rgba(18,18,31,0.7);backdrop-filter:blur(16px);
+  border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:28px;
+  box-shadow:0 10px 40px rgba(0,0,0,0.4)}
+.hero-info{flex:1}
+.hero-title{font-size:28px;font-weight:800;margin-bottom:6px;
+  background:linear-gradient(135deg,#F43F5E,#8B5CF6,#3B82F6);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero-subtitle{font-size:15px;color:#7a7a9a;margin-bottom:16px}
+.info-table{width:100%;border-collapse:collapse;font-size:13px}
+.info-table th{text-align:right;padding:10px 14px;background:rgba(255,255,255,0.03);
+  color:#7a7a9a;font-weight:500;width:120px;border-bottom:1px solid rgba(255,255,255,0.06);white-space:nowrap}
+.info-table td{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.04);color:#f0f0f5}
+.info-table tr:last-child th,.info-table tr:last-child td{border-bottom:none}
+.tag{display:inline-block;background:rgba(124,58,237,0.15);color:#a78bfa;
+  padding:3px 10px;border-radius:999px;font-size:11px;margin:2px;font-weight:500}
+.rating-badge{display:inline-flex;align-items:center;gap:4px;
+  background:linear-gradient(135deg,rgba(225,29,72,0.2),rgba(124,58,237,0.2));
+  color:#F43F5E;padding:4px 12px;border-radius:999px;font-weight:700;font-size:14px}
+.plot-section{background:rgba(18,18,31,0.7);backdrop-filter:blur(16px);
+  border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:28px;
+  box-shadow:0 10px 40px rgba(0,0,0,0.4)}
+.plot-section h2{font-size:18px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.plot-section h2 span{background:linear-gradient(135deg,#F43F5E,#8B5CF6);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.plot-text{font-size:14px;line-height:2;color:#c5c5d5;text-align:justify;
+  padding:20px;background:rgba(255,255,255,0.02);border-radius:12px;border:1px solid rgba(255,255,255,0.04)}
+.footer{text-align:center;padding:20px;color:#55557a;font-size:11px;margin-top:24px}
+.footer a{color:#E11D48;text-decoration:none;font-weight:600;
+  padding:6px 16px;border:2px solid #E11D48;border-radius:999px;
+  transition:all 0.25s ease;display:inline-block;margin-top:6px}
+.footer a:hover{background:#E11D48;color:white;box-shadow:0 4px 15px rgba(225,29,72,0.3)}
+@media(max-width:600px){.hero{flex-direction:column;align-items:center;text-align:center}.info-table th{text-align:center}}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="hero">
+    <img src="${posterUrl}" alt="poster" style="max-height:450px;min-width:280px;border-radius:12px;object-fit:cover;box-shadow:0 8px 30px rgba(0,0,0,0.3);">
+    <div class="hero-info">
+      <div class="hero-title">${escapeHtml(title)}</div>
+      <div class="hero-subtitle">${escapeHtml(subtitle)}</div>
+      <table class="info-table">
+        <tr><th>🎭 ژانر</th><td>${genresTags}</td></tr>
+        <tr><th>🎬 بازیگران</th><td>${escapeHtml(actors)}</td></tr>
+        <tr><th>⭐ امتیاز</th><td><span class="rating-badge">⭐ ${escapeHtml(rating)}</span></td></tr>
+        <tr><th>📡 منبع</th><td>${escapeHtml(source)}</td></tr>
+        <tr><th>📀 کیفیت</th><td>${escapeHtml(quality)}</td></tr>
+        <tr><th>📅 سال</th><td>${escapeHtml(year)}</td></tr>
+        <tr><th>🌍 کشور</th><td>${countryHtml}</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="plot-section">
+    <h2>📖 <span>خلاصه داستان</span></h2>
+    <div class="plot-text">${escapeHtml(plot)}</div>
+  </div>
+  <div class="footer">
+    ساخته شده با ❤️ توسط Movie Metadata Fetcher<br>
+    <a href="https://donito.me/M_Alone">☕ حمایت مالی</a>
+  </div>
+</div>
+</body>
+</html>`;
+}
+
+/**
+ * Triggers a browser download of the movie HTML file.
+ */
+export function downloadMovieHtml(movie: Movie): void {
+  const htmlContent = generateMovieHtml(movie);
+  const cleanTitle = (movie.english_title || movie.title || 'movie')
+    .replace(/[\\/:*?"<>|]/g, '')
+    .trim()
+    .replace(/\s+/g, '_');
+  const year = formatMovieYear(movie) || movie.year || '';
+  const filename = `${cleanTitle}${year ? `_${year}` : ''}.html`;
+
+  const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Copies the generated HTML code to the user's clipboard.
+ */
+export async function copyMovieHtmlToClipboard(movie: Movie): Promise<boolean> {
+  try {
+    const htmlContent = generateMovieHtml(movie);
+    await navigator.clipboard.writeText(htmlContent);
+    return true;
+  } catch (err) {
+    console.error('Failed to copy HTML to clipboard:', err);
+    return false;
+  }
+}
+
+/**
+ * Generates a unified catalog HTML containing all selected movies.
+ */
+export function generateCatalogHtml(movies: Movie[], catalogTitle: string = 'آرشیو فیلم‌ها و سریال‌ها'): string {
+  if (movies.length === 1) {
+    return generateMovieHtml(movies[0]);
+  }
+
+  const moviesHtml = movies.map(movie => {
+    const year = formatMovieYear(movie) || movie.year || '';
+    const title = movie.title || 'بدون عنوان';
+    const englishTitle = movie.english_title || '';
+    const subtitle = englishTitle ? `${englishTitle} — ${year}` : (year ? `محصول سال ${year}` : '');
+
+    const rawGenre = movie.genre || 'سینمایی';
+    const genreTokens = rawGenre
+      .split(/[|،,•]+/)
+      .map(g => g.trim())
+      .filter(Boolean);
+
+    const genresTags = genreTokens.length > 0
+      ? genreTokens.map(g => `<span class="tag">${escapeHtml(g)}</span>`).join('')
+      : `<span class="tag">سینمایی</span>`;
+
+    const actors = movie.actors || '—';
+    const rating = movie.rating || '7.5';
+    const source = movie.channel || 'uptvs.com';
+    const quality = movie.quality || '1080p Full HD';
+    const countryName = movie.country || (isIranianMovie(movie) ? 'ایران' : 'بین‌المللی');
+    const flagEmoji = getCountryFlagEmoji(countryName);
+    const countryHtml = `${flagEmoji} ${escapeHtml(countryName)}`;
+
+    const posterUrl = movie.poster_url || 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=780&auto=format&fit=crop&q=80';
+    const plot = movie.description || `خلاصه داستان اثر «${title}» به زودی قرار خواهد گرفت.`;
+
+    return `
+    <div class="movie-card-wrapper" style="margin-bottom: 40px;">
+      <div class="hero">
+        <img src="${posterUrl}" alt="poster" style="max-height:450px;min-width:280px;border-radius:12px;object-fit:cover;box-shadow:0 8px 30px rgba(0,0,0,0.3);">
+        <div class="hero-info">
+          <div class="hero-title">${escapeHtml(title)}</div>
+          <div class="hero-subtitle">${escapeHtml(subtitle)}</div>
+          <table class="info-table">
+            <tr><th>🎭 ژانر</th><td>${genresTags}</td></tr>
+            <tr><th>🎬 بازیگران</th><td>${escapeHtml(actors)}</td></tr>
+            <tr><th>⭐ امتیاز</th><td><span class="rating-badge">⭐ ${escapeHtml(rating)}</span></td></tr>
+            <tr><th>📡 منبع</th><td>${escapeHtml(source)}</td></tr>
+            <tr><th>📀 کیفیت</th><td>${escapeHtml(quality)}</td></tr>
+            <tr><th>📅 سال</th><td>${escapeHtml(year)}</td></tr>
+            <tr><th>🌍 کشور</th><td>${countryHtml}</td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="plot-section">
+        <h2>📖 <span>خلاصه داستان</span></h2>
+        <div class="plot-text">${escapeHtml(plot)}</div>
+      </div>
+    </div>
+    `;
+  }).join('\n');
+
+  return `<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtml(catalogTitle)} (${movies.length} اثر)</title>
+<style>
+/* Vazirmatn font - installed system-wide */
+body { font-family: 'Vazirmatn', 'Tahoma', 'Arial', sans-serif; }
+</style>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Vazirmatn',sans-serif;background:#0a0a14;color:#f0f0f5;min-height:100vh;
+  background-image:radial-gradient(ellipse at 20% 50%,rgba(124,58,237,0.08) 0%,transparent 50%),
+  radial-gradient(ellipse at 80% 20%,rgba(225,29,72,0.06) 0%,transparent 50%)}
+.page{max-width:860px;margin:0 auto;padding:30px 20px}
+.catalog-header{text-align:center;margin-bottom:36px;padding:24px;background:rgba(18,18,31,0.7);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.08);border-radius:20px}
+.catalog-header h1{font-size:32px;font-weight:900;background:linear-gradient(135deg,#F43F5E,#8B5CF6,#3B82F6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:8px}
+.catalog-header p{color:#8E8EB0;font-size:14px}
+.hero{display:flex;gap:24px;align-items:start;margin-bottom:20px;
+  background:rgba(18,18,31,0.7);backdrop-filter:blur(16px);
+  border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:28px;
+  box-shadow:0 10px 40px rgba(0,0,0,0.4)}
+.hero-info{flex:1}
+.hero-title{font-size:28px;font-weight:800;margin-bottom:6px;
+  background:linear-gradient(135deg,#F43F5E,#8B5CF6,#3B82F6);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero-subtitle{font-size:15px;color:#7a7a9a;margin-bottom:16px}
+.info-table{width:100%;border-collapse:collapse;font-size:13px}
+.info-table th{text-align:right;padding:10px 14px;background:rgba(255,255,255,0.03);
+  color:#7a7a9a;font-weight:500;width:120px;border-bottom:1px solid rgba(255,255,255,0.06);white-space:nowrap}
+.info-table td{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.04);color:#f0f0f5}
+.info-table tr:last-child th,.info-table tr:last-child td{border-bottom:none}
+.tag{display:inline-block;background:rgba(124,58,237,0.15);color:#a78bfa;
+  padding:3px 10px;border-radius:999px;font-size:11px;margin:2px;font-weight:500}
+.rating-badge{display:inline-flex;align-items:center;gap:4px;
+  background:linear-gradient(135deg,rgba(225,29,72,0.2),rgba(124,58,237,0.2));
+  color:#F43F5E;padding:4px 12px;border-radius:999px;font-weight:700;font-size:14px}
+.plot-section{background:rgba(18,18,31,0.7);backdrop-filter:blur(16px);
+  border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:28px;
+  box-shadow:0 10px 40px rgba(0,0,0,0.4)}
+.plot-section h2{font-size:18px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.plot-section h2 span{background:linear-gradient(135deg,#F43F5E,#8B5CF6);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.plot-text{font-size:14px;line-height:2;color:#c5c5d5;text-align:justify;
+  padding:20px;background:rgba(255,255,255,0.02);border-radius:12px;border:1px solid rgba(255,255,255,0.04)}
+.footer{text-align:center;padding:20px;color:#55557a;font-size:11px;margin-top:32px}
+.footer a{color:#E11D48;text-decoration:none;font-weight:600;
+  padding:6px 16px;border:2px solid #E11D48;border-radius:999px;
+  transition:all 0.25s ease;display:inline-block;margin-top:6px}
+.footer a:hover{background:#E11D48;color:white;box-shadow:0 4px 15px rgba(225,29,72,0.3)}
+@media(max-width:600px){.hero{flex-direction:column;align-items:center;text-align:center}.info-table th{text-align:center}}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="catalog-header">
+    <h1>${escapeHtml(catalogTitle)}</h1>
+    <p>مجموعه شامل ${movies.length} فیلم و سریال با اطلاعات کامل و بهینه‌سازی شده</p>
+  </div>
+  
+  ${moviesHtml}
+
+  <div class="footer">
+    ساخته شده با ❤️ توسط Movie Metadata Fetcher<br>
+    <a href="https://donito.me/M_Alone">☕ حمایت مالی</a>
+  </div>
+</div>
+</body>
+</html>`;
+}
+
+/**
+ * Downloads a catalog HTML file containing all movies.
+ */
+export function downloadCatalogHtml(movies: Movie[], catalogTitle: string = 'آرشیو_فیلم_ها'): void {
+  const htmlContent = generateCatalogHtml(movies, catalogTitle);
+  const cleanTitle = catalogTitle.replace(/[\\/:*?"<>|]/g, '').trim().replace(/\s+/g, '_');
+  const filename = `${cleanTitle}_${movies.length}_items.html`;
+
+  const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}

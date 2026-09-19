@@ -1,0 +1,1761 @@
+import React from 'react';
+import { Movie, MovieAward } from '../types';
+import { CATEGORIES } from '../data/categories';
+import { parseMovieHtml } from '../utils/htmlParser';
+import { enrichMovie, fetchAutoTrailerLinks, AutoTrailerResult } from '../utils/movieEnricher';
+import { MovieService } from '../services/api';
+import { fetchMultiSourceMovieStills } from '../services/movieStillsService';
+import { gregorianToSolarYear } from '../utils/dateHelper';
+import {
+  X,
+  Film,
+  Sparkles,
+  Image as ImageIcon,
+  Video,
+  Star,
+  Calendar,
+  Globe,
+  Layers,
+  UserCheck,
+  FileCode,
+  UploadCloud,
+  CheckCircle2,
+  ClipboardPaste,
+  Wand2,
+  Plus,
+  Trash2,
+  Trophy,
+  Award,
+  DollarSign,
+  Clapperboard,
+  BookOpen,
+  SlidersHorizontal
+} from 'lucide-react';
+
+interface AddEditMovieModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (movieData: Partial<Movie>) => void;
+  initialMovie?: Movie | null;
+  prefilledHtml?: string | null;
+}
+
+type EditorTab = 'basic' | 'story' | 'cast' | 'media' | 'awards' | 'boxoffice';
+
+const PRESET_POSTERS = [
+  { label: 'فیلم اکشن / علمی‌تخیلی', url: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80' },
+  { label: 'سینمای ایران / درام', url: 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=600&auto=format&fit=crop&q=80' },
+  { label: 'سریال هیجانی / جنایی', url: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=600&auto=format&fit=crop&q=80' },
+  { label: 'انیمیشن و کودک', url: 'https://images.unsplash.com/photo-1563089145-599997674d42?w=600&auto=format&fit=crop&q=80' },
+  { label: 'عاشقانه و کلاسیک', url: 'https://images.unsplash.com/photo-1518676590629-3dcbd9c5a5c9?w=600&auto=format&fit=crop&q=80' },
+  { label: 'مستند و طبیعت', url: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80' },
+];
+
+const POPULAR_GENRES = [
+  'درام',
+  'اکشن',
+  'هیجان انگیز',
+  'جنایی',
+  'علمی تخیلی',
+  'کمدی',
+  'ماجراجویی',
+  'معمایی',
+  'ترسناک',
+  'عاشقانه',
+  'انیمیشن',
+  'بیوگرافی',
+  'تاریخی',
+  'مستند',
+  'فانتزی',
+  'جنگی',
+];
+
+const QUALITY_PRESETS = [
+  '1080p WEB-DL',
+  '1080p BluRay',
+  '720p WEB-DL',
+  '720p BluRay',
+  '4K Ultra HD',
+  '1080p Full HD',
+  'HQ-1080p',
+];
+
+export const AddEditMovieModal: React.FC<AddEditMovieModalProps> = ({
+  isOpen,
+  onClose,
+  onSave,
+  initialMovie,
+  prefilledHtml,
+}) => {
+  const [activeTab, setActiveTab] = React.useState<EditorTab>('basic');
+
+  // Basic Info
+  const [title, setTitle] = React.useState('');
+  const [englishTitle, setEnglishTitle] = React.useState('');
+  const [category, setCategory] = React.useState('foreign_movies');
+  const [year, setYear] = React.useState(new Date().getFullYear().toString());
+  const [rating, setRating] = React.useState('7.5');
+  const [genre, setGenre] = React.useState('درام، اکشن');
+  const [country, setCountry] = React.useState('ایران');
+  const [quality, setQuality] = React.useState('720p BluRay');
+
+  // Story & Description
+  const [description, setDescription] = React.useState('');
+  const [awardsSummary, setAwardsSummary] = React.useState('');
+
+  // Cast & Crew
+  const [director, setDirector] = React.useState('');
+  const [actors, setActors] = React.useState('');
+
+  // Media
+  const [posterUrl, setPosterUrl] = React.useState('https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=600&auto=format&fit=crop&q=80');
+  const [trailerUrl, setTrailerUrl] = React.useState('');
+  const [stillsList, setStillsList] = React.useState<string[]>([]);
+  const [newStillUrl, setNewStillUrl] = React.useState('');
+  const [isFetchingStills, setIsFetchingStills] = React.useState(false);
+  const [stillsSourceInfo, setStillsSourceInfo] = React.useState('');
+  const [autoTrailerData, setAutoTrailerData] = React.useState<AutoTrailerResult | null>(null);
+  const [isFetchingTrailer, setIsFetchingTrailer] = React.useState(false);
+  const [selectedTrailerSource, setSelectedTrailerSource] = React.useState<'imdb' | 'youtube'>('imdb');
+
+  // Box Office & IDs
+  const [imdbId, setImdbId] = React.useState('');
+  const [boxOffice, setBoxOffice] = React.useState('');
+
+  // TMDb Smart Auto-Fill States
+  const [tmdbSearchQuery, setTmdbSearchQuery] = React.useState('');
+  const [isTmdbSearching, setIsTmdbSearching] = React.useState(false);
+  const [tmdbResults, setTmdbResults] = React.useState<any[]>([]);
+  const [showTmdbDropdown, setShowTmdbDropdown] = React.useState(false);
+  const [isTmdbAutofilling, setIsTmdbAutofilling] = React.useState(false);
+  const [tmdbAutofillStep, setTmdbAutofillStep] = React.useState('');
+
+  // Awards
+  const [awardsList, setAwardsList] = React.useState<MovieAward[]>([]);
+  const awardsPendingRef = React.useRef<Promise<void> | null>(null);
+  const [newAwardTitle, setNewAwardTitle] = React.useState('');
+  const [newAwardCategory, setNewAwardCategory] = React.useState('');
+  const [newAwardYear, setNewAwardYear] = React.useState('');
+  const [newAwardWinner, setNewAwardWinner] = React.useState(true);
+
+  // Status & Modals
+  const [error, setError] = React.useState('');
+  const [successInfo, setSuccessInfo] = React.useState('');
+  const [isDragging, setIsDragging] = React.useState(false);
+  const [showPasteModal, setShowPasteModal] = React.useState(false);
+  const [rawHtmlText, setRawHtmlText] = React.useState('');
+
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Live TMDb Search Handler
+  const handleSearchTmdbLive = async (queryVal: string) => {
+    setTmdbSearchQuery(queryVal);
+    if (!queryVal.trim() || queryVal.trim().length < 2) {
+      setTmdbResults([]);
+      setShowTmdbDropdown(false);
+      return;
+    }
+
+    setIsTmdbSearching(true);
+    try {
+      const results = await MovieService.searchTmdb(queryVal);
+      setTmdbResults(results);
+      setShowTmdbDropdown(results.length > 0);
+    } catch {
+      // Continue
+    } finally {
+      setIsTmdbSearching(false);
+    }
+  };
+
+  // 1-Click Comprehensive TMDb & Gemini Autofill Handler
+  const handleApplyTmdbAutofill = async (target: { id?: string | number; media_type?: 'movie' | 'tv'; title?: string }) => {
+    setIsTmdbAutofilling(true);
+    setShowTmdbDropdown(false);
+    setError('');
+    setSuccessInfo('');
+    setTmdbAutofillStep('۱. استعلام از پایگاه داده بین‌المللی سینما (TMDb)...');
+
+    try {
+      setTmdbAutofillStep('۲. استخراج مشخصات فنی، پوستر HD و تصاویر صحنه 4K...');
+      const fullData = await MovieService.autofillFromTmdb(target);
+      
+      if (!fullData || !fullData.ok) {
+        setError('یافتن اطلاعات این اثر در پایگاه TMDb با مشکل مواجه شد. لطفاً نام اثر را بررسی کنید.');
+        return;
+      }
+
+      setTmdbAutofillStep('۳. ترجمه و نگارش فارسی خلاصه داستان با هوش مصنوعی و واژگان سینمایی...');
+      
+      // 1. Basic Info
+      if (fullData.title) setTitle(fullData.title);
+      if (fullData.english_title) setEnglishTitle(fullData.english_title);
+      if (fullData.category) setCategory(fullData.category);
+      if (fullData.country) setCountry(fullData.country);
+      
+      const isIran = fullData.category === 'iranian_movies' || fullData.category === 'iranian_series' || fullData.country === 'ایران';
+      if (isIran && fullData.solar_year) {
+        setYear(fullData.solar_year);
+      } else if (isIran && fullData.year) {
+        setYear(gregorianToSolarYear(fullData.year));
+      } else if (fullData.year) {
+        setYear(fullData.year);
+      }
+
+      if (fullData.rating) setRating(fullData.rating);
+      if (fullData.genre) setGenre(fullData.genre);
+      if (fullData.quality) setQuality(fullData.quality);
+      
+      // 2. Cast & Crew
+      if (fullData.director) setDirector(fullData.director);
+      if (fullData.actors) setActors(fullData.actors);
+
+      // 3. Story & Plot
+      if (fullData.description) setDescription(fullData.description);
+      if (fullData.awards_summary) setAwardsSummary(fullData.awards_summary);
+
+      // Structured awards: prefer list embedded in autofill response, else fetch awards-auto
+      if (awardsList.length === 0) {
+        let awardsArr = Array.isArray(fullData.awards) ? fullData.awards : [];
+        if (awardsArr.length === 0 && (fullData.imdb_id || fullData.english_title || fullData.title)) {
+          try {
+            const qp = new URLSearchParams({
+              imdb_id: fullData.imdb_id || '',
+              title: fullData.english_title || fullData.title || ''
+            });
+            const ctl = new AbortController();
+            const to = setTimeout(() => ctl.abort(), 15000);
+            const awRes = await fetch(`/api/movies/awards-auto?${qp.toString()}`, { signal: ctl.signal });
+            clearTimeout(to);
+            if (awRes.ok) {
+              const aw = await awRes.json();
+              if (aw.ok && Array.isArray(aw.awards)) awardsArr = aw.awards;
+            }
+          } catch { /* awards optional */ }
+        }
+        if (awardsArr.length > 0) setAwardsList(awardsArr);
+        else if (fullData.title || fullData.imdb_id) {
+          // Last resort: Gemini-powered awards for any movie
+          try {
+            const gq = new URLSearchParams({
+              imdb_id: fullData.imdb_id || '',
+              title: fullData.english_title || fullData.title || '',
+              year: fullData.year || ''
+            });
+            const ctl2 = new AbortController();
+            const to2 = setTimeout(() => ctl2.abort(), 30000);
+            const gRes = await fetch(`/api/movies/gemini-awards?${gq.toString()}`, { signal: ctl2.signal });
+            clearTimeout(to2);
+            if (gRes.ok) {
+              const g = await gRes.json();
+              if (g.ok && Array.isArray(g.awards) && g.awards.length > 0) {
+                setAwardsList(g.awards);
+                if (g.awards_summary) setAwardsSummary(g.awards_summary);
+              }
+            }
+          } catch { /* optional */ }
+        }
+      }
+
+      // 4. Media & Stills
+      if (fullData.poster_url) setPosterUrl(fullData.poster_url);
+      if (fullData.trailer_url) setTrailerUrl(fullData.trailer_url);
+      if (fullData.movie_stills) {
+        try {
+          const parsed = JSON.parse(fullData.movie_stills);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setStillsList(parsed);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // 5. Box Office & IMDb
+      if (fullData.imdb_id) setImdbId(fullData.imdb_id);
+      if (fullData.box_office) setBoxOffice(fullData.box_office);
+
+      setTmdbAutofillStep('۴. استخراج عوامل و تکمیل فرم...');
+
+      const actorCount = fullData.cast_list ? fullData.cast_list.length : (fullData.actors ? fullData.actors.split('،').length : 0);
+      const stillsCount = fullData.movie_stills ? JSON.parse(fullData.movie_stills).length : 0;
+      
+      setSuccessInfo(`تمام فرم با موفقیت از پایگاه جهانی TMDb و هوش مصنوعی پر شد! (${fullData.title} | ${actorCount} بازیگر | ${stillsCount} فریم 4K)`);
+      setActiveTab('basic');
+    } catch (err) {
+      setError('خطا در اجرای فرآیند هوشمند TMDb. لطفاً مجدداً امتحان کنید.');
+    } finally {
+      setIsTmdbAutofilling(false);
+      setTmdbAutofillStep('');
+    }
+  };
+
+  const applyParsedData = (data: ReturnType<typeof parseMovieHtml>, filename?: string) => {
+    if (data.title) setTitle(data.title);
+    if (data.english_title) setEnglishTitle(data.english_title);
+    if (data.category) setCategory(data.category);
+    if (data.country) setCountry(data.country);
+
+    const isIran = data.category === 'iranian_movies' || data.category === 'iranian_series' || (data.country && data.country.includes('ایران'));
+    if (data.year) {
+      setYear(isIran ? gregorianToSolarYear(data.year) : data.year);
+    }
+
+    if (data.rating) setRating(data.rating);
+    if (data.genre) setGenre(data.genre);
+    if (data.quality) setQuality(data.quality);
+    if (data.actors) setActors(data.actors);
+    if (data.description) setDescription(data.description);
+    if (data.poster_url) setPosterUrl(data.poster_url);
+    if (data.imdb_id) setImdbId(data.imdb_id);
+    if (data.box_office) setBoxOffice(data.box_office);
+
+    // Resolve trailer automatically
+    const trailerInfo = fetchAutoTrailerLinks(
+      data.title || '',
+      data.english_title || '',
+      data.year || '',
+      data.imdb_id
+    );
+    setAutoTrailerData(trailerInfo);
+    setTrailerUrl(data.trailer_url || trailerInfo.imdbTrailerUrl || trailerInfo.youtubeTrailerUrl);
+
+    setSuccessInfo(
+      filename
+        ? `اطلاعات اثر «${data.title || filename}» با موفقیت از فایل HTML استخراج شد!`
+        : `اطلاعات اثر «${data.title}» با موفقیت اعمال شد!`
+    );
+    setError('');
+
+    // Auto-fetch awards (DB first, then Gemini) — tracked so save waits for it
+    if (!data.awards || data.awards.length === 0) {
+      const awardTitle = data.english_title || data.title || '';
+      const awardImdb = data.imdb_id || '';
+      if (awardTitle || awardImdb) {
+        awardsPendingRef.current = (async () => {
+          try {
+            const qp = new URLSearchParams({ imdb_id: awardImdb, title: awardTitle, year: data.year || '' });
+            const ctl = new AbortController();
+            const to = setTimeout(() => ctl.abort(), 35000);
+            const res = await fetch(`/api/movies/gemini-awards?${qp.toString()}`, { signal: ctl.signal });
+            clearTimeout(to);
+            if (res.ok) {
+              const j = await res.json();
+              if (j.ok && Array.isArray(j.awards) && j.awards.length > 0) {
+                setAwardsList(j.awards);
+                if (j.awards_summary && !data.awards_summary) setAwardsSummary(j.awards_summary);
+              }
+            }
+          } catch { /* awards optional */ }
+        })();
+      }
+    }
+  };
+
+  const handleAutoFetchTrailer = async (preferredSource?: 'imdb' | 'youtube') => {
+    const targetTitle = title.trim() || englishTitle.trim();
+    if (!targetTitle) {
+      setError('لطفاً ابتدا عنوان فارسی یا انگلیسی فیلم را وارد نمایید.');
+      return;
+    }
+
+    setIsFetchingTrailer(true);
+    setError('');
+
+    try {
+      const result = await MovieService.autoFetchTrailerLinks(
+        title.trim(),
+        englishTitle.trim(),
+        year.trim(),
+        imdbId.trim()
+      );
+
+      setAutoTrailerData(result);
+      if (result.imdbId && !imdbId) {
+        setImdbId(result.imdbId);
+      }
+
+      const sourceToUse = preferredSource || selectedTrailerSource;
+      if (sourceToUse === 'youtube') {
+        setTrailerUrl(result.youtubeTrailerUrl);
+        setSelectedTrailerSource('youtube');
+      } else {
+        setTrailerUrl(result.imdbTrailerUrl);
+        setSelectedTrailerSource('imdb');
+      }
+
+      setSuccessInfo('لینک‌های تریلر IMDb و یوتیوب با موفقیت به صورت خودکار دریافت شدند!');
+    } catch {
+      setError('خطا در دریافت خودکار تریلر. لطفاً دوباره تلاش کنید.');
+    } finally {
+      setIsFetchingTrailer(false);
+    }
+  };
+
+  const handleAutoEnrich = () => {
+    if (!title.trim() && !englishTitle.trim()) {
+      setError('لطفاً ابتدا عنوان فارسی یا انگلیسی فیلم را وارد نمایید.');
+      return;
+    }
+
+    const currentData = {
+      title: title.trim() || englishTitle.trim(),
+      english_title: englishTitle.trim(),
+      year: year.trim(),
+      category,
+      genre: genre.trim(),
+      country: country.trim(),
+      quality: quality.trim(),
+      rating: rating.trim(),
+      actors: actors.trim(),
+      director: director.trim(),
+      description: description.trim(),
+      poster_url: posterUrl.trim(),
+      trailer_url: trailerUrl.trim(),
+      imdb_id: imdbId.trim(),
+      box_office: boxOffice.trim(),
+      awards: awardsList,
+      awards_summary: awardsSummary.trim(),
+    };
+
+    const enriched = enrichMovie(currentData);
+    if (enriched.imdb_id) setImdbId(enriched.imdb_id);
+    if (enriched.box_office) setBoxOffice(enriched.box_office);
+    if (enriched.trailer_url) setTrailerUrl(enriched.trailer_url);
+    if (enriched.genre && !genre) setGenre(enriched.genre);
+    if (enriched.year && !year) setYear(enriched.year);
+    if (enriched.country && !country) setCountry(enriched.country);
+    if (enriched.director && !director) setDirector(enriched.director);
+    if (enriched.awards_summary && !awardsSummary) setAwardsSummary(enriched.awards_summary);
+    if (enriched.awards && enriched.awards.length > 0 && awardsList.length === 0) {
+      setAwardsList(enriched.awards);
+    }
+    if (enriched.movie_stills && stillsList.length === 0) {
+      try {
+        const parsed = JSON.parse(enriched.movie_stills);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setStillsList(parsed);
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const trailerInfo = fetchAutoTrailerLinks(
+      currentData.title,
+      currentData.english_title,
+      currentData.year,
+      enriched.imdb_id
+    );
+    setAutoTrailerData(trailerInfo);
+
+    setSuccessInfo('شناسه IMDb، کارگردان، فروش گیشه، جوایز و تریلرهای رسمی به صورت هوشمند تکمیل شدند!');
+    setError('');
+  };
+
+  const handleHtmlContent = (content: string, filename?: string) => {
+    try {
+      const parsed = parseMovieHtml(content);
+      applyParsedData(parsed, filename);
+    } catch (err) {
+      console.error('Error parsing HTML:', err);
+      setError('خطا در خواندن اطلاعات فایل HTML. لطفاً قالب فایل را بررسی کنید.');
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (content) {
+        handleHtmlContent(content, file.name);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (file && (file.type.includes('html') || file.name.endsWith('.html') || file.name.endsWith('.htm'))) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const content = event.target?.result as string;
+        if (content) {
+          handleHtmlContent(content, file.name);
+        }
+      };
+      reader.readAsText(file);
+    } else {
+      const text = e.dataTransfer.getData('text/html') || e.dataTransfer.getData('text/plain');
+      if (text && text.includes('<')) {
+        handleHtmlContent(text);
+      } else {
+        setError('لطفاً یک فایل HTML معتبر رها کنید.');
+      }
+    }
+  };
+
+  const handlePasteSubmit = () => {
+    if (!rawHtmlText.trim()) return;
+    handleHtmlContent(rawHtmlText);
+    setShowPasteModal(false);
+    setRawHtmlText('');
+  };
+
+  // Genre toggle helper
+  const toggleGenre = (selectedG: string) => {
+    const currentGenres = genre ? genre.split(/[,،]/).map(g => g.trim()).filter(Boolean) : [];
+    if (currentGenres.includes(selectedG)) {
+      const filtered = currentGenres.filter(g => g !== selectedG);
+      setGenre(filtered.join('، '));
+    } else {
+      currentGenres.push(selectedG);
+      setGenre(currentGenres.join('، '));
+    }
+  };
+
+  // Stills management
+  const handleAddStill = () => {
+    if (!newStillUrl.trim()) return;
+    // Support comma or newline separated multiple URLs
+    const urls = newStillUrl
+      .split(/[\n,]+/)
+      .map(u => u.trim())
+      .filter(u => u.startsWith('http://') || u.startsWith('https://'));
+    
+    if (urls.length > 0) {
+      const merged = Array.from(new Set([...stillsList, ...urls]));
+      setStillsList(merged);
+      setNewStillUrl('');
+      setSuccessInfo(`${urls.length} تصویر صحنه با موفقیت به گالری افزوده شد.`);
+    } else {
+      setError('لطفاً یک آدرس اینترنتی معتبر تصویر (شروع با https://) وارد نمایید.');
+    }
+  };
+
+  const handleRemoveStill = (index: number) => {
+    setStillsList(stillsList.filter((_, i) => i !== index));
+  };
+
+  const handleClearStills = () => {
+    setStillsList([]);
+    setStillsSourceInfo('');
+  };
+
+  const handleAutoFetchStills = async () => {
+    const targetTitle = title.trim() || englishTitle.trim();
+    if (!targetTitle) {
+      setError('لطفاً ابتدا عنوان فارسی یا انگلیسی فیلم را وارد نمایید.');
+      return;
+    }
+
+    setIsFetchingStills(true);
+    setError('');
+    try {
+      const result = await fetchMultiSourceMovieStills(
+        title.trim(),
+        englishTitle.trim(),
+        imdbId.trim(),
+        genre.trim(),
+        country.trim(),
+        category
+      );
+
+      if (result.stills && result.stills.length > 0) {
+        const urls = result.stills.map(s => s.url);
+        // Merge without duplicate URLs
+        const merged = Array.from(new Set([...stillsList, ...urls]));
+        setStillsList(merged);
+        setStillsSourceInfo(result.source_summary);
+        setSuccessInfo(result.source_summary);
+      } else {
+        setError('تصویر رسمی در پایگاه داده TMDB برای این اثر یافت نشد. می‌توانید لینک تصاویر را به صورت دستی وارد نمایید.');
+      }
+    } catch {
+      setError('خطا در برقراری ارتباط با پایگاه داده TMDB.');
+    } finally {
+      setIsFetchingStills(false);
+    }
+  };
+
+  // Awards management
+  const handleAddAward = () => {
+    if (!newAwardTitle.trim()) return;
+    const newAward: MovieAward = {
+      id: `award_${Date.now()}`,
+      title: newAwardTitle.trim(),
+      category: newAwardCategory.trim() || 'بهترین فیلم / کارگردانی',
+      year: newAwardYear.trim() || year || '2024',
+      is_winner: newAwardWinner,
+      organization: newAwardTitle.trim(),
+      icon: newAwardTitle.includes('اسکار') || newAwardTitle.toLowerCase().includes('oscar') 
+        ? 'oscar' 
+        : newAwardTitle.includes('گلدن') || newAwardTitle.toLowerCase().includes('globe') 
+        ? 'globe' 
+        : newAwardTitle.includes('کن') || newAwardTitle.toLowerCase().includes('cannes') 
+        ? 'cannes' 
+        : newAwardTitle.includes('بفتا') || newAwardTitle.toLowerCase().includes('bafta') 
+        ? 'bafta' 
+        : newAwardTitle.includes('فجر') || newAwardTitle.toLowerCase().includes('fajr') 
+        ? 'fajr' 
+        : 'trophy',
+    };
+    setAwardsList([...awardsList, newAward]);
+    setNewAwardTitle('');
+    setNewAwardCategory('');
+    setNewAwardYear('');
+  };
+
+  const handleRemoveAward = (index: number) => {
+    setAwardsList(awardsList.filter((_, i) => i !== index));
+  };
+
+  // Pre-fill form when editing or resetting
+  React.useEffect(() => {
+    if (initialMovie) {
+      setTitle(initialMovie.title || '');
+      setEnglishTitle(initialMovie.english_title || '');
+      setCategory(initialMovie.category || 'foreign_movies');
+      setYear(initialMovie.year || new Date().getFullYear().toString());
+      setRating(initialMovie.rating || '7.5');
+      setGenre(initialMovie.genre || 'درام');
+      setCountry(initialMovie.country || 'ایران');
+      setQuality(initialMovie.quality || '720p BluRay');
+      setActors(initialMovie.actors || '');
+      setDirector(initialMovie.director || '');
+      setDescription(initialMovie.description || '');
+      setPosterUrl(initialMovie.poster_url || PRESET_POSTERS[0].url);
+      setTrailerUrl(initialMovie.trailer_url || '');
+      setImdbId(initialMovie.imdb_id || '');
+      setBoxOffice(initialMovie.box_office || '');
+      setAwardsSummary(initialMovie.awards_summary || '');
+      setAwardsList(initialMovie.awards || []);
+      
+      // Parse stills
+      if (initialMovie.movie_stills) {
+        try {
+          const parsed = JSON.parse(initialMovie.movie_stills);
+          if (Array.isArray(parsed)) setStillsList(parsed);
+          else setStillsList(initialMovie.movie_stills.split(',').map(s => s.trim()).filter(Boolean));
+        } catch {
+          setStillsList(initialMovie.movie_stills.split(',').map(s => s.trim()).filter(Boolean));
+        }
+      } else {
+        setStillsList([]);
+      }
+    } else if (prefilledHtml) {
+      handleHtmlContent(prefilledHtml);
+    } else {
+      setTitle('');
+      setEnglishTitle('');
+      setCategory('foreign_movies');
+      setYear(new Date().getFullYear().toString());
+      setRating('7.8');
+      setGenre('اکشن، هیجان انگیز');
+      setCountry('آمریکا');
+      setQuality('720p BluRay');
+      setActors('');
+      setDirector('');
+      setDescription('');
+      setPosterUrl(PRESET_POSTERS[0].url);
+      setTrailerUrl('');
+      setImdbId('');
+      setBoxOffice('');
+      setAwardsSummary('');
+      setAwardsList([]);
+      setStillsList([]);
+    }
+    setError('');
+    setSuccessInfo('');
+    setActiveTab('basic');
+  }, [initialMovie, isOpen, prefilledHtml]);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim()) {
+      setError('لطفاً عنوان اثر را وارد کنید');
+      setActiveTab('basic');
+      return;
+    }
+
+    // Wait for any in-flight auto-awards fetch so awards aren't lost on save
+    if (awardsPendingRef.current) {
+      await awardsPendingRef.current;
+      awardsPendingRef.current = null;
+    }
+
+    // Build cast photos structure if actors entered
+    const actorNames = actors.split(/[,،|]/).map(a => a.trim()).filter(Boolean);
+    const generatedActorPhotos = actorNames.map(name => ({
+      name,
+      photo: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=2A2A40&color=ffffff&bold=true`
+    }));
+
+    onSave({
+      message_id: initialMovie?.message_id,
+      title: title.trim(),
+      english_title: englishTitle.trim(),
+      category,
+      year: year.trim(),
+      rating: rating.trim(),
+      genre: genre.trim(),
+      country: country.trim(),
+      quality: quality.trim(),
+      director: director.trim(),
+      actors: actors.trim(),
+      description: description.trim(),
+      poster_url: posterUrl.trim(),
+      trailer_url: trailerUrl.trim(),
+      imdb_id: imdbId.trim(),
+      box_office: boxOffice.trim(),
+      awards_summary: awardsSummary.trim(),
+      awards: awardsList.length > 0 ? awardsList : undefined,
+      movie_stills: stillsList.length > 0 ? JSON.stringify(stillsList) : undefined,
+      actor_photos: generatedActorPhotos.length > 0 ? JSON.stringify(generatedActorPhotos) : initialMovie?.actor_photos || '[]',
+      is_favorite: initialMovie?.is_favorite || false,
+    });
+
+    onClose();
+  };
+
+  const tabs: { id: EditorTab; label: string; icon: React.ReactNode }[] = [
+    { id: 'basic', label: 'مشخصات اصلی', icon: <SlidersHorizontal className="w-4 h-4" /> },
+    { id: 'story', label: 'داستان و خلاصه', icon: <BookOpen className="w-4 h-4" /> },
+    { id: 'cast', label: 'عوامل و بازیگران', icon: <UserCheck className="w-4 h-4" /> },
+    { id: 'media', label: 'رسانه و تریلر', icon: <Video className="w-4 h-4" /> },
+    { id: 'awards', label: 'جوایز و افتخارات', icon: <Trophy className="w-4 h-4" /> },
+    { id: 'boxoffice', label: 'گیشه و IMDb', icon: <DollarSign className="w-4 h-4" /> },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md overflow-y-auto animate-fade-in" dir="rtl">
+      <div 
+        id="add-edit-movie-modal-card"
+        className={`relative w-full max-w-4xl bg-[#131322] border ${
+          isDragging ? 'border-[#E50914] ring-2 ring-[#E50914]' : 'border-[#282842]'
+        } rounded-3xl shadow-2xl overflow-hidden my-6 max-h-[92vh] flex flex-col transition-all`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {/* Hidden File Input */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileChange}
+          accept=".html,.htm,text/html"
+          className="hidden"
+        />
+
+        {/* Modal Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#25253C] bg-[#18182C]">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#E50914] to-red-600 flex items-center justify-center text-white shadow-md shadow-red-600/30">
+              <Film className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                <span>{initialMovie ? 'ویرایش پیشرفته فیلم و سریال' : 'افزودن پیشرفته اثر جدید'}</span>
+                {initialMovie && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#00D4FF]/20 text-[#00D4FF] border border-[#00D4FF]/30">
+                    کد اثر #{initialMovie.message_id}
+                  </span>
+                )}
+              </h2>
+              <p className="text-xs text-[#9090B0]">
+                مدیریت جامع متادیتا، تریلرها، بازیگران، جوایز سینمایی و فروش گیشه با TMDb و هوش مصنوعی
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Quick AI Enrich Button */}
+            <button
+              type="button"
+              id="header-ai-enrich-btn"
+              onClick={handleAutoEnrich}
+              title="تکمیل هوشمند خودکار اطلاعات اثر"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#00D4FF]/20 to-blue-600/20 hover:from-[#00D4FF]/30 hover:to-blue-600/30 text-[#00D4FF] border border-[#00D4FF]/40 text-xs font-bold transition-all hover:scale-105 active:scale-95"
+            >
+              <Wand2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">تکمیل هوشمند AI</span>
+            </button>
+
+            <button
+              id="close-add-movie-modal-btn"
+              onClick={onClose}
+              className="p-2 rounded-xl text-[#9090B0] hover:text-white hover:bg-[#25253C] transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* TMDb Smart Auto-Fill Hero Bar */}
+        <div className="px-6 pt-4">
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-[#12192E] via-[#161D38] to-[#101426] border border-[#00D4FF]/30 shadow-lg relative">
+            <div className="flex items-center justify-between gap-2 mb-2.5">
+              <div className="flex items-center gap-2">
+                <div className="px-2 py-0.5 rounded-md bg-[#00D4FF]/20 border border-[#00D4FF]/40 text-[#00D4FF] text-[10px] font-black tracking-wider uppercase">
+                  TMDb + AI
+                </div>
+                <h4 className="text-xs sm:text-sm font-black text-white flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-[#00D4FF] animate-pulse" />
+                  <span>تکمیل خودکار ۱-کلیک از پایگاه بین‌المللی سینما (TMDb)</span>
+                </h4>
+              </div>
+              <span className="text-[11px] text-[#8E8EA8] hidden md:inline">
+                استعلام همزمان فارسی و انگلیسی + تصاویر 4K + ترجمه سینمایی
+              </span>
+            </div>
+
+            {/* Search Input & Action */}
+            <div className="relative flex flex-col sm:flex-row items-stretch gap-2">
+              <div className="relative flex-1">
+                <input
+                  id="tmdb-smart-search-input"
+                  type="text"
+                  value={tmdbSearchQuery}
+                  onChange={(e) => handleSearchTmdbLive(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (tmdbSearchQuery.trim()) {
+                        handleApplyTmdbAutofill({ title: tmdbSearchQuery.trim() });
+                      }
+                    }
+                  }}
+                  placeholder="نام فیلم یا سریال را بنویسید (مثلاً: ملک سلیمان، The Kingdom of Solomon، فروشنده، اوپنهایمر...)"
+                  className="w-full bg-[#0A0D18] text-white text-xs sm:text-sm rounded-xl pr-3.5 pl-10 py-2.5 border border-[#2B3558] focus:border-[#00D4FF] focus:outline-none transition-colors placeholder-[#64648A]"
+                />
+                {isTmdbSearching && (
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[#00D4FF]">
+                    <div className="w-4 h-4 border-2 border-[#00D4FF] border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                id="tmdb-execute-autofill-btn"
+                disabled={isTmdbAutofilling || (!tmdbSearchQuery.trim() && !title.trim())}
+                onClick={() => handleApplyTmdbAutofill({ title: tmdbSearchQuery.trim() || title.trim() })}
+                className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#00D4FF] to-blue-600 hover:from-[#00c2ea] hover:to-blue-500 disabled:opacity-50 text-[#0A0D18] font-black text-xs sm:text-sm shadow-md shadow-cyan-500/20 transition-all active:scale-95 shrink-0"
+              >
+                <Wand2 className="w-4 h-4 text-[#0A0D18]" />
+                <span>{isTmdbAutofilling ? 'در حال تکمیل خودکار...' : 'پر کردن خودکار تمام فرم'}</span>
+              </button>
+            </div>
+
+            {/* Autofill in progress step banner */}
+            {isTmdbAutofilling && tmdbAutofillStep && (
+              <div className="mt-3 p-3 rounded-xl bg-[#00D4FF]/15 border border-[#00D4FF]/40 text-[#00D4FF] text-xs font-bold flex items-center gap-2.5 animate-pulse">
+                <div className="w-4 h-4 border-2 border-[#00D4FF] border-t-transparent rounded-full animate-spin shrink-0" />
+                <span>{tmdbAutofillStep}</span>
+              </div>
+            )}
+
+            {/* Dropdown Live Results */}
+            {showTmdbDropdown && tmdbResults.length > 0 && !isTmdbAutofilling && (
+              <div className="absolute left-4 right-4 top-full mt-1.5 z-40 bg-[#101428] border border-[#2F3C64] rounded-2xl shadow-2xl overflow-hidden max-h-72 overflow-y-auto custom-scrollbar animate-fade-in">
+                <div className="p-2 bg-[#171D36] border-b border-[#232B48] flex items-center justify-between text-[11px] text-[#A0A0C8] px-3 font-semibold">
+                  <span>نتایج یافت شده در دیتابیس TMDb ({tmdbResults.length} مورد)</span>
+                  <span>روی اثر مورد نظر کلیک کنید تا تمام فرم پر شود</span>
+                </div>
+                <div className="divide-y divide-[#1D2440]">
+                  {tmdbResults.map((item, idx) => (
+                    <div
+                      key={`${item.media_type}_${item.tmdb_id}_${idx}`}
+                      onClick={() => handleApplyTmdbAutofill({ id: item.tmdb_id, media_type: item.media_type, title: item.title })}
+                      className="p-2.5 hover:bg-[#1A2242] cursor-pointer transition-colors flex items-center justify-between gap-3 group"
+                    >
+                      <div className="flex items-center gap-3">
+                        {item.poster_url ? (
+                          <img
+                            src={item.poster_url}
+                            alt={item.title}
+                            referrerPolicy="no-referrer"
+                            className="w-10 h-14 object-cover rounded-lg border border-[#30385C] shadow-sm shrink-0"
+                          />
+                        ) : (
+                          <div className="w-10 h-14 rounded-lg bg-[#202744] flex items-center justify-center text-[#707098] shrink-0">
+                            <Film className="w-5 h-5" />
+                          </div>
+                        )}
+                        <div className="text-right">
+                          <h5 className="text-xs font-bold text-white group-hover:text-[#00D4FF] transition-colors flex items-center gap-1.5">
+                            <span>{item.title}</span>
+                            {item.english_title && item.english_title !== item.title && (
+                              <span className="text-[11px] text-[#8E8EB0] font-normal" dir="ltr">
+                                ({item.english_title})
+                              </span>
+                            )}
+                          </h5>
+                          <div className="flex items-center gap-2 mt-1 text-[11px] text-[#8E8EB0]">
+                            {item.year_display && (
+                              <span className="flex items-center gap-0.5 text-amber-400 font-semibold">
+                                <Calendar className="w-3 h-3" />
+                                {item.year_display}
+                              </span>
+                            )}
+                            {item.director && (
+                              <span>کارگردان: <strong className="text-white font-medium">{item.director}</strong></span>
+                            )}
+                            {item.rating && (
+                              <span className="flex items-center gap-0.5 text-emerald-400 font-bold">
+                                <Star className="w-3 h-3 fill-emerald-400" />
+                                {item.rating}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="px-3 py-1.5 rounded-lg bg-[#00D4FF]/20 group-hover:bg-[#00D4FF] text-[#00D4FF] group-hover:text-[#0A0D18] text-xs font-bold transition-all shrink-0"
+                      >
+                        تکمیل خودکار
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* Secondary Option: HTML Import & Raw Text */}
+            <div className="mt-2.5 pt-2 border-t border-[#1C2442] flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#8E8EB0]">
+              <div className="flex items-center gap-1.5">
+                <FileCode className="w-3.5 h-3.5 text-purple-400" />
+                <span>روش‌های دیگر: درون‌ریزی از فایل HTML یا متن خام</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-1 text-purple-300 hover:text-white bg-purple-900/30 hover:bg-purple-900/50 px-2.5 py-1 rounded-lg border border-purple-700/40 transition-colors"
+                >
+                  <UploadCloud className="w-3 h-3" />
+                  <span>انتخاب فایل HTML</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPasteModal(true)}
+                  className="flex items-center gap-1 text-[#B0B0D0] hover:text-white bg-[#1C2036] hover:bg-[#252A47] px-2.5 py-1 rounded-lg border border-[#2F3658] transition-colors"
+                >
+                  <ClipboardPaste className="w-3 h-3" />
+                  <span>جای‌گذاری متن</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Feedback Banners */}
+          {successInfo && (
+            <div className="mt-3 p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-semibold flex items-center gap-2 animate-fade-in">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+              <span>{successInfo}</span>
+            </div>
+          )}
+
+          {error && (
+            <div className="mt-3 p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-semibold">
+              {error}
+            </div>
+          )}
+        </div>
+
+        {/* Tab Navigation Navigation Bar */}
+        <div className="px-6 pt-3 pb-2 border-b border-[#222238] flex items-center gap-2 overflow-x-auto no-scrollbar">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              id={`editor-tab-${t.id}`}
+              onClick={() => setActiveTab(t.id)}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                activeTab === t.id
+                  ? 'bg-gradient-to-r from-[#E50914] to-red-600 text-white shadow-md shadow-red-600/20'
+                  : 'bg-[#18182C] text-[#8E8EA8] hover:text-white hover:bg-[#222238]'
+              }`}
+            >
+              {t.icon}
+              <span>{t.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Form Body */}
+        <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-5 flex-1 custom-scrollbar">
+          
+          {/* TAB 1: BASIC INFO */}
+          {activeTab === 'basic' && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-[#A8A8C0]">
+                      عنوان فارسی اثر <span className="text-rose-500">*</span>
+                    </label>
+                    {title.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => handleApplyTmdbAutofill({ title: title.trim() })}
+                        className="text-[11px] text-[#00D4FF] hover:underline flex items-center gap-1"
+                        title="استعلام و تکمیل مجدد از TMDb"
+                      >
+                        <Wand2 className="w-3 h-3" />
+                        <span>استعلام از TMDb</span>
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    id="movie-title-input"
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="مثال: ملک سلیمان، اوپنهایمر، فروشنده..."
+                    className="w-full bg-[#1A1A2E] text-white text-sm rounded-xl px-3.5 py-2.5 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none transition-colors"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[#A8A8C0] mb-1.5">
+                    عنوان انگلیسی / بین‌المللی
+                  </label>
+                  <input
+                    id="movie-english-title-input"
+                    type="text"
+                    value={englishTitle}
+                    onChange={(e) => setEnglishTitle(e.target.value)}
+                    placeholder="مثال: The Kingdom of Solomon, Oppenheimer..."
+                    className="w-full bg-[#1A1A2E] text-white text-sm rounded-xl px-3.5 py-2.5 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none transition-colors"
+                    dir="ltr"
+                  />
+                </div>
+              </div>
+
+              {/* Category, Year, Rating, Quality */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-[#A8A8C0] mb-1.5 flex items-center gap-1">
+                    <Layers className="w-3.5 h-3.5 text-[#00D4FF]" />
+                    <span>دسته‌بندی</span>
+                  </label>
+                  <select
+                    id="movie-category-select"
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    className="w-full bg-[#1A1A2E] text-white text-xs rounded-xl px-3 py-2.5 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none"
+                  >
+                    {Object.entries(CATEGORIES).map(([catKey, catName]) => (
+                      <option key={catKey} value={catKey}>{catName}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[#A8A8C0] mb-1.5 flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                    <span>سال ساخت</span>
+                  </label>
+                  <input
+                    id="movie-year-input"
+                    type="text"
+                    value={year}
+                    onChange={(e) => setYear(e.target.value)}
+                    placeholder="2024"
+                    className="w-full bg-[#1A1A2E] text-white text-xs rounded-xl px-3 py-2.5 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none text-center font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[#A8A8C0] mb-1.5 flex items-center gap-1">
+                    <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400" />
+                    <span>امتیاز IMDb</span>
+                  </label>
+                  <input
+                    id="movie-rating-input"
+                    type="text"
+                    value={rating}
+                    onChange={(e) => setRating(e.target.value)}
+                    placeholder="8.5"
+                    className="w-full bg-[#1A1A2E] text-white text-xs rounded-xl px-3 py-2.5 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none text-center font-bold font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[#A8A8C0] mb-1.5 flex items-center gap-1">
+                    <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>کشور سازنده</span>
+                  </label>
+                  <input
+                    id="movie-country-input"
+                    type="text"
+                    value={country}
+                    onChange={(e) => setCountry(e.target.value)}
+                    placeholder="ایران، آمریکا..."
+                    className="w-full bg-[#1A1A2E] text-white text-xs rounded-xl px-3 py-2.5 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Quality Presets & Genre */}
+              <div>
+                <label className="block text-xs font-bold text-[#A8A8C0] mb-1.5">
+                  کیفیت و نسخه پخش
+                </label>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {QUALITY_PRESETS.map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => setQuality(q)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors ${
+                        quality === q
+                          ? 'bg-[#00D4FF]/20 text-[#00D4FF] border-[#00D4FF]/50'
+                          : 'bg-[#1A1A2E] text-[#8E8EA8] border-[#2A2A42] hover:text-white'
+                      }`}
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  id="movie-quality-input"
+                  type="text"
+                  value={quality}
+                  onChange={(e) => setQuality(e.target.value)}
+                  placeholder="1080p WEB-DL, 4K, 720p..."
+                  className="w-full bg-[#1A1A2E] text-white text-xs rounded-xl px-3.5 py-2 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none"
+                />
+              </div>
+
+              {/* Genres with Quick Chips */}
+              <div>
+                <label className="block text-xs font-bold text-[#A8A8C0] mb-1.5">
+                  ژانرهای اثر (کلیک برای افزودن/حذف سریع)
+                </label>
+                <div className="flex flex-wrap gap-1.5 mb-2.5">
+                  {POPULAR_GENRES.map((g) => {
+                    const isSelected = genre.includes(g);
+                    return (
+                      <button
+                        key={g}
+                        type="button"
+                        onClick={() => toggleGenre(g)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+                          isSelected
+                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 shadow-sm shadow-rose-500/20'
+                            : 'bg-[#1A1A2E] text-[#8E8EA8] border-[#282840] hover:text-white'
+                        }`}
+                      >
+                        {isSelected ? '✓ ' : '+ '}{g}
+                      </button>
+                    );
+                  })}
+                </div>
+                <input
+                  id="movie-genre-input"
+                  type="text"
+                  value={genre}
+                  onChange={(e) => setGenre(e.target.value)}
+                  placeholder="درام، اکشن، ماجراجویی..."
+                  className="w-full bg-[#1A1A2E] text-white text-xs rounded-xl px-3.5 py-2.5 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: STORY & DESCRIPTION */}
+          {activeTab === 'story' && (
+            <div className="space-y-4 animate-fade-in">
+              <div>
+                <label className="block text-xs font-bold text-[#A8A8C0] mb-1.5 flex items-center justify-between">
+                  <span>خلاصه و شرح داستان فارسی</span>
+                  <span className="text-[11px] text-[#707090]">{description.length} کاراکتر</span>
+                </label>
+                <textarea
+                  id="movie-description-input"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={7}
+                  placeholder="خلاصه کامل و جذاب داستان اثر، نکات کلیدی و نقد کوتاه..."
+                  className="w-full bg-[#1A1A2E] text-white text-sm rounded-2xl p-4 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none leading-relaxed resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#A8A8C0] mb-1.5">
+                  خلاصه افتخارات و شعار فیلم (Tagline & Awards Summary)
+                </label>
+                <input
+                  id="movie-awards-summary-input"
+                  type="text"
+                  value={awardsSummary}
+                  onChange={(e) => setAwardsSummary(e.target.value)}
+                  placeholder="برنده ۷ جایزه اسکار و نامزد دریافت بیش از ۳۰ جایزه بین‌المللی..."
+                  className="w-full bg-[#1A1A2E] text-white text-xs rounded-xl px-3.5 py-2.5 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: CAST & CREW */}
+          {activeTab === 'cast' && (
+            <div className="space-y-4 animate-fade-in">
+              <div>
+                <label className="block text-xs font-bold text-[#A8A8C0] mb-1.5 flex items-center gap-1.5">
+                  <Clapperboard className="w-3.5 h-3.5 text-[#00D4FF]" />
+                  <span>کارگردان (Director)</span>
+                </label>
+                <input
+                  id="movie-director-input"
+                  type="text"
+                  value={director}
+                  onChange={(e) => setDirector(e.target.value)}
+                  placeholder="کریستوفر نولان، اصغر فرهادی..."
+                  className="w-full bg-[#1A1A2E] text-white text-sm rounded-xl px-3.5 py-2.5 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#A8A8C0] mb-1.5 flex items-center gap-1.5">
+                  <UserCheck className="w-3.5 h-3.5 text-purple-400" />
+                  <span>لیست بازیگران اصلی (با کاما یا ویرگول جدا کنید)</span>
+                </label>
+                <textarea
+                  id="movie-actors-input"
+                  value={actors}
+                  onChange={(e) => setActors(e.target.value)}
+                  rows={4}
+                  placeholder="کیلین مورفی، امیلی بلانت، مت دیمون، رابرت داونی جونیور..."
+                  className="w-full bg-[#1A1A2E] text-white text-sm rounded-xl p-3.5 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none resize-none leading-relaxed"
+                />
+                <p className="text-[11px] text-[#707090] mt-1.5">
+                  پروفایل‌های تصویری و آواتارهای بازیگران به صورت خودکار از روی این اسامی تولید خواهند شد.
+                </p>
+              </div>
+
+              {/* Parsed Actors Preview Chips */}
+              {actors.trim() && (
+                <div>
+                  <span className="text-[11px] font-bold text-[#8E8EA8] mb-2 block">پیش‌نمایش بازیگران شناسایی شده:</span>
+                  <div className="flex flex-wrap gap-2">
+                    {actors.split(/[,،|]/).map(a => a.trim()).filter(Boolean).map((actor, idx) => (
+                      <div key={idx} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1D1D30] border border-[#2C2C48] text-xs text-white">
+                        <div className="w-5 h-5 rounded-full bg-purple-500/30 flex items-center justify-center text-[10px] font-bold text-purple-300">
+                          {actor.charAt(0)}
+                        </div>
+                        <span>{actor}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 4: MEDIA & TRAILERS */}
+          {activeTab === 'media' && (
+            <div className="space-y-5 animate-fade-in">
+              {/* Poster URL & Presets */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+                <div className="md:col-span-2 space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-[#A8A8C0] mb-1.5 flex items-center gap-1.5">
+                      <ImageIcon className="w-3.5 h-3.5 text-[#00D4FF]" />
+                      <span>آدرس تصویر پوستر فیلم</span>
+                    </label>
+                    <input
+                      id="movie-poster-url-input"
+                      type="url"
+                      value={posterUrl}
+                      onChange={(e) => setPosterUrl(e.target.value)}
+                      placeholder="https://..."
+                      className="w-full bg-[#1A1A2E] text-white text-xs rounded-xl px-3.5 py-2.5 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none"
+                      dir="ltr"
+                    />
+                  </div>
+
+                  <div>
+                    <span className="text-[11px] font-bold text-[#8E8EA8] block mb-1.5">انتخاب سریع از پوسترهای باکیفیت پیش‌فرض:</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {PRESET_POSTERS.map((preset, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setPosterUrl(preset.url)}
+                          className={`p-2 rounded-xl text-right text-[11px] border transition-all truncate ${
+                            posterUrl === preset.url
+                              ? 'bg-rose-500/20 text-rose-300 border-rose-500'
+                              : 'bg-[#18182C] text-[#8E8EA8] border-[#26263E] hover:text-white'
+                          }`}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Poster Live Preview Card */}
+                <div className="flex flex-col items-center justify-center p-3 bg-[#18182C] border border-[#282844] rounded-2xl">
+                  <span className="text-[11px] font-bold text-[#8E8EA8] mb-2">پیش‌نمایش پوستر</span>
+                  <div className="w-28 h-40 rounded-xl overflow-hidden shadow-lg border border-[#333350] bg-black">
+                    <img 
+                      src={posterUrl} 
+                      alt="پیش‌نمایش" 
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = PRESET_POSTERS[0].url;
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Trailer Section */}
+              <div className="p-4 rounded-2xl bg-[#161628] border border-[#2A2A44] space-y-3">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                  <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Video className="w-4 h-4 text-rose-500" />
+                    <span>آدرس تریلر ویدیویی (IMDb / YouTube / آپارات / لینک مستقیم mp4)</span>
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => handleAutoFetchTrailer()}
+                    disabled={isFetchingTrailer}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-rose-300 border border-red-500/40 text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    {isFetchingTrailer ? (
+                      <div className="w-3.5 h-3.5 border-2 border-rose-400 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    )}
+                    <span>دریافت خودکار تریلر</span>
+                  </button>
+                </div>
+
+                <div className="relative">
+                  <input
+                    id="movie-trailer-url-input"
+                    type="url"
+                    value={trailerUrl}
+                    onChange={(e) => setTrailerUrl(e.target.value)}
+                    placeholder="https://www.imdb.com/video/vi... یا لینک یوتیوب/آپارات"
+                    className="w-full bg-[#1A1A2E] text-white text-xs rounded-xl px-3.5 py-2.5 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none"
+                    dir="ltr"
+                  />
+                </div>
+
+                {/* Auto Trailer Sources if available */}
+                {autoTrailerData && (
+                  <div className="flex items-center gap-2 pt-1 text-xs">
+                    <span className="text-[#8E8EA8]">منابع آماده تریلر:</span>
+                    {autoTrailerData.imdbTrailerUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTrailerUrl(autoTrailerData.imdbTrailerUrl);
+                          setSelectedTrailerSource('imdb');
+                        }}
+                        className={`px-2.5 py-1 rounded-lg font-bold border transition-colors ${
+                          trailerUrl === autoTrailerData.imdbTrailerUrl
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500'
+                            : 'bg-[#1F1F35] text-[#8E8EA8] border-[#303050]'
+                        }`}
+                      >
+                        تریلر IMDb
+                      </button>
+                    )}
+                    {autoTrailerData.youtubeTrailerUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTrailerUrl(autoTrailerData.youtubeTrailerUrl);
+                          setSelectedTrailerSource('youtube');
+                        }}
+                        className={`px-2.5 py-1 rounded-lg font-bold border transition-colors ${
+                          trailerUrl === autoTrailerData.youtubeTrailerUrl
+                            ? 'bg-red-500/20 text-red-300 border-red-500'
+                            : 'bg-[#1F1F35] text-[#8E8EA8] border-[#303050]'
+                        }`}
+                      >
+                        تریلر یوتیوب
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Movie Stills (Gallery) Management */}
+              <div className="p-4 rounded-2xl bg-[#161628] border border-[#2A2A44] space-y-3.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <ImageIcon className="w-4 h-4 text-[#00D4FF]" />
+                      <span>گالری تصاویر و صحنه‌های فیلم (Movie Stills)</span>
+                    </label>
+                    <p className="text-[10px] text-[#8E8EA8] mt-0.5">
+                      تصاویر باکیفیت صحنه‌های فیلم، پشت‌صحنه و فریم‌های سینمایی
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-semibold text-[#00D4FF] bg-[#00D4FF]/10 px-2 py-0.5 rounded-lg border border-[#00D4FF]/20">
+                      {stillsList.length} تصویر ثبت شده
+                    </span>
+                    {stillsList.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearStills}
+                        className="text-[10px] text-rose-400 hover:text-rose-300 transition-colors"
+                      >
+                        پاکسازی
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* TMDB Auto Fetch Action Bar */}
+                <div className="flex flex-wrap items-center gap-2 p-2.5 rounded-xl bg-[#1B1B30] border border-[#2A2A44]">
+                  <button
+                    type="button"
+                    onClick={handleAutoFetchStills}
+                    disabled={isFetchingStills}
+                    className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#00D4FF]/20 to-indigo-500/20 hover:from-[#00D4FF]/30 hover:to-indigo-500/30 text-[#00D4FF] border border-[#00D4FF]/40 text-xs font-bold flex items-center justify-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
+                  >
+                    {isFetchingStills ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-[#00D4FF] border-t-transparent rounded-full animate-spin" />
+                        <span>در حال استخراج فریم‌های رسمی از TMDB...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5 text-[#00D4FF]" />
+                        <span>دریافت خودکار تصاویر صحنه از TMDB</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Sources Information Bar */}
+                <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-[#8E8EA8] bg-[#121222] p-2 rounded-xl border border-[#25253C]">
+                  <span className="font-semibold text-white/70">منبع معتبر تصاویر:</span>
+                  <span className="px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 font-medium">TMDB HD Backdrops & Stills (The Movie Database)</span>
+                </div>
+
+                {stillsSourceInfo && (
+                  <div className="text-[11px] text-[#00D4FF] bg-[#00D4FF]/5 border border-[#00D4FF]/20 px-3 py-1.5 rounded-xl">
+                    {stillsSourceInfo}
+                  </div>
+                )}
+
+                {/* Manual Add Input */}
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={newStillUrl}
+                    onChange={(e) => setNewStillUrl(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddStill();
+                      }
+                    }}
+                    placeholder="افزودن لینک عکس صحنه (https://...) یا چند لینک با ویرگول/خط جدید"
+                    className="flex-1 bg-[#1A1A2E] text-white text-xs rounded-xl px-3.5 py-2 border border-[#2E2E48] focus:border-[#00D4FF] focus:outline-none"
+                    dir="ltr"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddStill}
+                    className="px-3.5 py-2 rounded-xl bg-[#00D4FF]/20 hover:bg-[#00D4FF]/30 text-[#00D4FF] border border-[#00D4FF]/40 text-xs font-bold flex items-center gap-1 transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>افزودن</span>
+                  </button>
+                </div>
+
+                {/* Stills Grid */}
+                {stillsList.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5 pt-2">
+                    {stillsList.map((still, idx) => (
+                      <div key={idx} className="group relative rounded-xl overflow-hidden aspect-video bg-black border border-[#303050] hover:border-[#00D4FF] transition-all">
+                        <img src={still} alt={`صحنه ${idx + 1}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        <div className="absolute top-1 right-1 bg-black/70 backdrop-blur-sm text-[9px] text-white font-mono px-1.5 py-0.5 rounded">
+                          #{idx + 1}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveStill(idx)}
+                          className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-rose-400 transition-opacity gap-1"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          <span className="text-[10px] font-bold">حذف</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-6 border border-dashed border-[#2E2E48] rounded-xl bg-[#141424]/50">
+                    <ImageIcon className="w-8 h-8 text-[#8E8EA8]/40 mx-auto mb-2" />
+                    <p className="text-xs text-[#8E8EA8]">هیچ تصویری برای صحنه‌های این اثر ثبت نشده است.</p>
+                    <p className="text-[10px] text-[#6A6A85] mt-1">با کلیک روی «دریافت خودکار از منابع معتبر آنلاین»، تصاویر مربوطه استخراج می‌گردد.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 5: AWARDS & HONORS */}
+          {activeTab === 'awards' && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="p-4 rounded-2xl bg-[#161628] border border-[#2A2A44] space-y-3">
+                <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Trophy className="w-4 h-4 text-amber-400" />
+                  <span>افزودن جایزه یا افتخار سینمایی جدید</span>
+                </h4>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <input
+                    type="text"
+                    value={newAwardTitle}
+                    onChange={(e) => setNewAwardTitle(e.target.value)}
+                    placeholder="عنوان جایزه (مثال: اسکار، گلدن گلوب...)"
+                    className="bg-[#1A1A2E] text-white text-xs rounded-xl px-3 py-2 border border-[#2E2E48] focus:border-amber-400 focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    value={newAwardCategory}
+                    onChange={(e) => setNewAwardCategory(e.target.value)}
+                    placeholder="شاخه (مثال: بهترین فیلم، بهترین بازیگر...)"
+                    className="bg-[#1A1A2E] text-white text-xs rounded-xl px-3 py-2 border border-[#2E2E48] focus:border-amber-400 focus:outline-none"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newAwardYear}
+                      onChange={(e) => setNewAwardYear(e.target.value)}
+                      placeholder="سال (2024)"
+                      className="w-20 bg-[#1A1A2E] text-white text-xs rounded-xl px-2 py-2 border border-[#2E2E48] focus:border-amber-400 focus:outline-none text-center font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setNewAwardWinner(!newAwardWinner)}
+                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition-colors ${
+                        newAwardWinner 
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500' 
+                          : 'bg-[#1E1E34] text-[#8E8EA8] border-[#303050]'
+                      }`}
+                    >
+                      {newAwardWinner ? 'برنده' : 'نامزد'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAddAward}
+                      className="flex-1 px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs flex items-center justify-center gap-1 transition-colors"
+                    >
+                      <Plus className="w-4 h-4 stroke-[3]" />
+                      <span>افزودن</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Awards List */}
+              <div className="space-y-2">
+                <span className="text-xs font-bold text-[#A8A8C0]">لیست جوایز ثبت شده برای این اثر ({awardsList.length}):</span>
+                {awardsList.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-[#707090] bg-[#161628] rounded-2xl border border-[#222238]">
+                    هنوز جایزه‌ای برای این اثر ثبت نشده است. از فرم بالا اضافه کنید یا روی «تکمیل هوشمند AI» کلیک کنید.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {awardsList.map((aw, idx) => (
+                      <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-[#1A1A2E] border border-[#2C2C48]">
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                            aw.is_winner ? 'bg-amber-500/20 text-amber-400' : 'bg-blue-500/20 text-blue-400'
+                          }`}>
+                            <Award className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                              <span>{aw.title}</span>
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                                aw.is_winner ? 'bg-amber-500/20 text-amber-300' : 'bg-[#2A2A44] text-[#A0A0B5]'
+                              }`}>
+                                {aw.is_winner ? 'برنده' : 'نامزد'}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-[#8E8EA8]">{aw.category} • {aw.year}</div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveAward(idx)}
+                          className="p-1.5 text-[#707090] hover:text-rose-400 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 6: BOX OFFICE & IMDB */}
+          {activeTab === 'boxoffice' && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-[#A8A8C0] mb-1.5 flex items-center gap-1.5">
+                    <Star className="w-3.5 h-3.5 text-yellow-400" />
+                    <span>شناسه اختصاصی IMDb (ID)</span>
+                  </label>
+                  <input
+                    id="movie-imdb-id-input"
+                    type="text"
+                    value={imdbId}
+                    onChange={(e) => setImdbId(e.target.value)}
+                    placeholder="مثال: tt15398776"
+                    className="w-full bg-[#1A1A2E] text-white text-xs rounded-xl px-3.5 py-2.5 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none font-mono"
+                    dir="ltr"
+                  />
+                  <p className="text-[11px] text-[#707090] mt-1">
+                    شناسه IMDb برای تطبیق خودکار تریلرها، بازیگران و مشخصات استفاده می‌شود.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[#A8A8C0] mb-1.5 flex items-center gap-1.5">
+                    <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>فروش گیشه جهانی (Box Office)</span>
+                  </label>
+                  <input
+                    id="movie-box-office-input"
+                    type="text"
+                    value={boxOffice}
+                    onChange={(e) => setBoxOffice(e.target.value)}
+                    placeholder="مثال: $975,000,000 یا ۹۵ میلیارد تومان"
+                    className="w-full bg-[#1A1A2E] text-white text-xs rounded-xl px-3.5 py-2.5 border border-[#2E2E48] focus:border-[#E50914] focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal Footer Actions */}
+          <div className="pt-4 border-t border-[#222238] flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                id="modal-ai-enrich-footer-btn"
+                onClick={handleAutoEnrich}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#1C2034] hover:bg-[#252B46] text-[#00D4FF] border border-[#00D4FF]/30 text-xs font-bold transition-all"
+              >
+                <Wand2 className="w-3.5 h-3.5" />
+                <span>تکمیل خودکار AI</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-5 py-2.5 rounded-xl bg-[#1F1F32] hover:bg-[#282842] text-[#A0A0B8] hover:text-white text-xs font-bold transition-colors"
+              >
+                انصراف
+              </button>
+              <button
+                type="submit"
+                id="save-movie-submit-button"
+                className="flex-1 sm:flex-initial px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#E50914] to-red-600 hover:from-red-600 hover:to-[#E50914] text-white font-extrabold text-xs shadow-lg shadow-red-600/30 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+              >
+                {initialMovie ? 'ذخیره تغییرات اثر' : 'ثبت و انتشار اثر'}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      {/* Raw HTML/Text Paste Modal */}
+      {showPasteModal && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in" dir="rtl">
+          <div className="bg-[#18182C] border border-[#2E2E48] rounded-3xl p-6 max-w-xl w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <ClipboardPaste className="w-4 h-4 text-purple-400" />
+                <span>جای‌گذاری متن یا کدهای HTML فیلم</span>
+              </h3>
+              <button
+                onClick={() => setShowPasteModal(false)}
+                className="p-1 rounded-lg text-[#8E8EA8] hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-[#8E8EA8]">
+              کدهای HTML پست فیلم از وب‌سایت یا تلگرام را اینجا الصاق کنید تا عنوان، پوستر، سال، ژانر و توضیحات استخراج شوند:
+            </p>
+
+            <textarea
+              rows={8}
+              value={rawHtmlText}
+              onChange={(e) => setRawHtmlText(e.target.value)}
+              placeholder="<div class='movie'>...</div>"
+              className="w-full bg-[#121220] text-white text-xs rounded-xl p-3 border border-[#2A2A44] font-mono focus:border-purple-500 focus:outline-none resize-none"
+              dir="ltr"
+            />
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowPasteModal(false)}
+                className="px-4 py-2 rounded-xl bg-[#222238] text-xs font-bold text-[#A0A0B8]"
+              >
+                بستن
+              </button>
+              <button
+                type="button"
+                onClick={handlePasteSubmit}
+                className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md shadow-purple-600/30"
+              >
+                استخراج اطلاعات
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
