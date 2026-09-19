@@ -1,0 +1,6 @@
+{
+  "name": "MovieBrowser",
+  "description": "Persian movie and series browser with trailers, cast details, box office rankings, and watchlist tracking",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

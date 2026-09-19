@@ -1,0 +1,139 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the user"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "User email address"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name of the user",
+          "maxLength": 100
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "User avatar photo URL",
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of account creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last profile update"
+        }
+      },
+      "required": ["userId", "email", "createdAt"]
+    },
+    "UserTrackingItem": {
+      "title": "UserTrackingItem",
+      "description": "Personal movie or series tracking entry for a user",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner user UID"
+        },
+        "message_id": {
+          "type": "number",
+          "description": "Movie or series message ID"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the movie or series",
+          "maxLength": 500
+        },
+        "english_title": {
+          "type": "string",
+          "description": "English title",
+          "maxLength": 500
+        },
+        "poster_url": {
+          "type": "string",
+          "description": "Poster image URL",
+          "maxLength": 2000
+        },
+        "media_type": {
+          "type": "string",
+          "description": "Media type (e.g. movie, series, animation)"
+        },
+        "status": {
+          "type": "string",
+          "description": "Watch status"
+        },
+        "current_season": {
+          "type": "number",
+          "description": "Current season number"
+        },
+        "last_episode": {
+          "type": "number",
+          "description": "Last episode watched"
+        },
+        "total_episodes": {
+          "type": "number",
+          "description": "Total episodes in series"
+        },
+        "times_watched": {
+          "type": "number",
+          "description": "How many times watched or rewatched"
+        },
+        "user_rating": {
+          "type": "number",
+          "description": "User rating out of 10"
+        },
+        "next_episode_date": {
+          "type": "string",
+          "description": "Date of next episode"
+        },
+        "note": {
+          "type": "string",
+          "description": "Personal user notes",
+          "maxLength": 2000
+        },
+        "favorite": {
+          "type": "boolean",
+          "description": "Whether marked as favorite in tracking"
+        },
+        "category": {
+          "type": "string",
+          "description": "Genre or category",
+          "maxLength": 100
+        },
+        "year": {
+          "type": "string",
+          "description": "Release year",
+          "maxLength": 20
+        },
+        "updated_at": {
+          "type": "number",
+          "description": "Timestamp in milliseconds of update"
+        }
+      },
+      "required": ["userId", "message_id", "media_type"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "User profile document containing account metadata"
+    },
+    "/users/{userId}/tracking/{trackingId}": {
+      "schema": {
+        "$ref": "#/entities/UserTrackingItem"
+      },
+      "description": "User's personal movie and series watchlist and progress tracking items"
+    }
+  }
+}
